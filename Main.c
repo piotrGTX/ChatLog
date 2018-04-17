@@ -16,16 +16,26 @@
 #define DEFAULT_DELETE_TIME 10U
 #define SHOW_LIMIT 10U
 
+#define MAX_CLIENTS 10
+
 HANDLE *watek;
 HANDLE watek_servera;
-SOCKET mySocket, serverSocket;
-char clientName[MAX_USER_LEN] = { '\0' };
+SOCKET mySocket;
+
+// Server
+unsigned unsigned int client_index = 0;
+struct Client {
+	HANDLE watek;
+	SOCKET clientSocket;
+	char clientName[MAX_USER_LEN];
+} clients[MAX_CLIENTS];
 
 static unsigned int countOfThreads = 1;
 static unsigned int maxID = 0;
 
 char isChatMod = 0;
 char isOnlineMod = 0;
+char isServer = 0;
 
 struct Log {
 	char user[MAX_USER_LEN];
@@ -150,7 +160,15 @@ void chatMod() {
 
 		addNewMessage(your_name, new_message);
 		if (isOnlineMod == 1) {
+			send(mySocket, your_name, strlen(your_name) + 1, 0);
 			send(mySocket, new_message, strlen(new_message) + 1, 0);
+			if (isServer == 1) {
+				// Serwer musi rozesłać wiadomość 
+				for (unsigned int i = 0; i < MAX_CLIENTS; i++) {
+					send(clients[i].clientSocket, your_name, strlen(your_name) + 1, 0);
+					send(clients[i].clientSocket, new_message, strlen(new_message) + 1, 0);
+				}
+			}
 		}
 	}
 }
@@ -401,6 +419,61 @@ void selectMessageToCopy() {
 	system("PAUSE");
 }
 
+struct reciveFromClientStruct {
+	unsigned int index;
+} *reciveFromStruct;
+
+DWORD WINAPI receveFromClientThread(void* args) {
+	char buffer[MAX_MESSAGE_LEN];
+
+	unsigned int curret_index = ((struct reciveFromClientStruct*)args)->index;
+
+	while (1) {
+
+		buffer[0] = '\0';
+		recv(clients[curret_index].clientSocket, buffer, MAX_MESSAGE_LEN, 0);
+		copyText(buffer, clients[curret_index].clientName, MAX_USER_LEN);
+
+		if (buffer[0] == '\0') {
+			closesocket(clients[curret_index].clientSocket);
+			clients[curret_index].clientName[0] = '\0';
+			break;
+		}
+
+		buffer[0] = '\0';
+		recv(clients[curret_index].clientSocket, buffer, MAX_MESSAGE_LEN, 0);
+
+		if (buffer[0] == '\0') {
+			closesocket(clients[curret_index].clientSocket);
+			clients[curret_index].clientName[0] = '\0';
+			break;
+		}
+
+		const char* user_name = clients[curret_index].clientName;
+		for (unsigned int i = 0; i < MAX_CLIENTS; i++) {
+			if (i != curret_index) {
+				if (user_name[0] != '\0') {
+					send(clients[i].clientSocket, user_name, strlen(user_name) + 1, 0);
+					send(clients[i].clientSocket, buffer, strlen(buffer) + 1, 0);
+				}
+			}
+		}
+
+
+		addNewMessage(clients[curret_index].clientName, buffer);
+		if (isChatMod == 1) {
+			system("cls");
+			printf("0 - Powrot do menu\n\n");
+			showMessages(SHOW_LIMIT);
+			printf("\n");
+
+			printf("%s: ", your_name);
+		}
+	}
+
+	return 0;
+}
+
 DWORD WINAPI startServerThread() {
 
 	WSADATA wsaData;
@@ -418,10 +491,10 @@ DWORD WINAPI startServerThread() {
 	local.sin_port = htons(3000); //port to use
 
 	//the socket function creates our SOCKET
-	serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+	mySocket = socket(AF_INET, SOCK_STREAM, 0);
 
 	//If the socket() function fails we exit
-	if (serverSocket == INVALID_SOCKET) {
+	if (mySocket == INVALID_SOCKET) {
 		printf("INVALID_SOCKET");
 		WSACleanup();
 		return 1;
@@ -431,7 +504,7 @@ DWORD WINAPI startServerThread() {
 	//structure. Basically it connects the socket with 
 	//the local address and a specified port.
 	//If it returns non-zero quit, as this indicates error
-	if (bind(serverSocket, (struct sockaddr*)&local, sizeof(local)) != 0)  {
+	if (bind(mySocket, (struct sockaddr*)&local, sizeof(local)) != 0)  {
 		printf("BIND ERROR");
 		WSACleanup();
 		return 1;
@@ -439,7 +512,7 @@ DWORD WINAPI startServerThread() {
 
 	//listen instructs the socket to listen for incoming 
 	//connections from clients. The second arg is the backlog
-	if (listen(serverSocket, 10) != 0) 	{
+	if (listen(mySocket, 10) != 0) 	{
 		printf("LISTEN ERROR");
 		WSACleanup();
 		return 1;
@@ -450,41 +523,28 @@ DWORD WINAPI startServerThread() {
 	struct sockaddr_in from;
 	int fromlen = sizeof(from);
 
-	char buffer[MAX_MESSAGE_LEN];
-	isOnlineMod = 1;
+
+	isOnlineMod = isServer = 1;
 	printf("Server jest uruchomiony ! \n");
 
 	while (1) {
 
-		mySocket = accept(serverSocket, &from, &fromlen);
-		// Wysyłanie swojej nazwy
-		send(mySocket, your_name, strlen(your_name) + 1, 0);
+		unsigned int curret_index = (client_index++);
 
-		while (1) {
+		clients[curret_index].clientSocket = accept(mySocket, &from, &fromlen);
+		
+		reciveFromStruct = malloc(sizeof(struct reciveFromClientStruct));
+		reciveFromStruct->index = curret_index;
 
-			buffer[0] = '\0';
-			recv(mySocket, buffer, MAX_MESSAGE_LEN, 0);
-
-			if (buffer[0] == '\0') {
-				closesocket(mySocket);
-				break;
-			}
-
-			if (clientName[0] == '\0') {
-				copyText(buffer, clientName, MAX_USER_LEN);
-				continue;
-			}
-
-			addNewMessage(clientName, buffer);
-			if (isChatMod == 1) {
-				system("cls");
-				printf("0 - Powrot do menu\n\n");
-				showMessages(SHOW_LIMIT);
-				printf("\n");
-
-				printf("%s: ", your_name);
-			}
-		}
+		DWORD id;
+		clients[curret_index].watek = CreateThread(
+			NULL,
+			0,
+			receveFromClientThread,
+			(void*)reciveFromStruct,
+			0,
+			&id
+		);
 
 	}
 
@@ -557,23 +617,31 @@ DWORD WINAPI startClientThread() {
 
 	printf("Client jest uruchomiony ! \n");
 
-	// Wysyłanie swojej nazwy
-	send(mySocket, your_name, strlen(your_name) + 1, 0);
-
 	isOnlineMod = 1;
+	char buffer_name[MAX_MESSAGE_LEN];
 	char buffer[MAX_MESSAGE_LEN];
 
 	while (1) {
 
+		buffer_name[0] = '\0';
+		recv(mySocket, buffer_name, MAX_USER_LEN, 0);
+
+		if (buffer_name[0] == '\0') {
+			closesocket(mySocket);
+			isOnlineMod = 0;
+			break;
+		}
+
 		buffer[0] = '\0';
 		recv(mySocket, buffer, MAX_MESSAGE_LEN, 0);
 
-		if (clientName[0] == '\0') {
-			copyText(buffer, clientName, MAX_USER_LEN);
-			continue;
+		if (buffer[0] == '\0') {
+			closesocket(mySocket);
+			isOnlineMod = 0;
+			break;
 		}
 
-		addNewMessage(clientName, buffer);
+		addNewMessage(buffer_name, buffer);
 		if (isChatMod == 1) {
 			system("cls");
 			printf("0 - Powrot do menu\n\n");
@@ -672,7 +740,6 @@ void readOptions() {
 		break;
 	case '0':
 		removeAll();
-		closesocket(serverSocket);
 		closesocket(mySocket);
 		WSACleanup();
 		exit(0);
