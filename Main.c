@@ -16,7 +16,8 @@
 #define DEFAULT_DELETE_TIME 10U
 #define SHOW_LIMIT 10U
 
-#define MAX_CLIENTS 10
+#define MAX_CLIENTS 20
+#define IP_ADDRES "42.0.117.0"
 
 HANDLE *watek;
 HANDLE watek_servera;
@@ -427,40 +428,34 @@ DWORD WINAPI receveFromClientThread(void* args) {
 	char buffer[MAX_MESSAGE_LEN];
 
 	unsigned int curret_index = ((struct reciveFromClientStruct*)args)->index;
+	struct Client *current_client = &clients[curret_index];
 
 	while (1) {
 
 		buffer[0] = '\0';
-		recv(clients[curret_index].clientSocket, buffer, MAX_MESSAGE_LEN, 0);
-		copyText(buffer, clients[curret_index].clientName, MAX_USER_LEN);
+		recv(current_client->clientSocket, buffer, MAX_MESSAGE_LEN, 0);
+		copyText(buffer, current_client->clientName, MAX_USER_LEN);
 
 		if (buffer[0] == '\0') {
-			closesocket(clients[curret_index].clientSocket);
-			clients[curret_index].clientName[0] = '\0';
 			break;
 		}
 
 		buffer[0] = '\0';
-		recv(clients[curret_index].clientSocket, buffer, MAX_MESSAGE_LEN, 0);
+		recv(current_client->clientSocket, buffer, MAX_MESSAGE_LEN, 0);
 
 		if (buffer[0] == '\0') {
-			closesocket(clients[curret_index].clientSocket);
-			clients[curret_index].clientName[0] = '\0';
 			break;
 		}
 
-		const char* user_name = clients[curret_index].clientName;
+		const char* user_name = current_client->clientName;
 		for (unsigned int i = 0; i < MAX_CLIENTS; i++) {
 			if (i != curret_index) {
-				if (user_name[0] != '\0') {
-					send(clients[i].clientSocket, user_name, strlen(user_name) + 1, 0);
-					send(clients[i].clientSocket, buffer, strlen(buffer) + 1, 0);
-				}
+				send(clients[i].clientSocket, user_name, strlen(user_name) + 1, 0);
+				send(clients[i].clientSocket, buffer, strlen(buffer) + 1, 0);
 			}
 		}
 
-
-		addNewMessage(clients[curret_index].clientName, buffer);
+		addNewMessage(user_name, buffer);
 		if (isChatMod == 1) {
 			system("cls");
 			printf("0 - Powrot do menu\n\n");
@@ -470,6 +465,9 @@ DWORD WINAPI receveFromClientThread(void* args) {
 			printf("%s: ", your_name);
 		}
 	}
+
+	closesocket(current_client->clientSocket);
+	current_client->clientName[0] = '\0';
 
 	return 0;
 }
@@ -481,53 +479,45 @@ DWORD WINAPI startServerThread() {
 
 	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
 		printf("Error WSAStartup");
+		isOnlineMod = 0;
 		WSACleanup();
 		return 1;
 	}
 
-	//Now we populate the sockaddr_in structure
-	local.sin_family = AF_INET; //Address family
-	local.sin_addr.s_addr = INADDR_ANY; //Wild card IP address
-	local.sin_port = htons(3000); //port to use
+	local.sin_family = AF_INET;
+	local.sin_addr.s_addr = INADDR_ANY;
+	local.sin_port = htons(3000);
 
-	//the socket function creates our SOCKET
 	mySocket = socket(AF_INET, SOCK_STREAM, 0);
 
-	//If the socket() function fails we exit
 	if (mySocket == INVALID_SOCKET) {
 		printf("INVALID_SOCKET");
+		isOnlineMod = 0;
 		WSACleanup();
 		return 1;
 	}
 
-	//bind links the socket we just created with the sockaddr_in 
-	//structure. Basically it connects the socket with 
-	//the local address and a specified port.
-	//If it returns non-zero quit, as this indicates error
 	if (bind(mySocket, (struct sockaddr*)&local, sizeof(local)) != 0)  {
 		printf("BIND ERROR");
+		isOnlineMod = 0;
 		WSACleanup();
 		return 1;
 	}
 
-	//listen instructs the socket to listen for incoming 
-	//connections from clients. The second arg is the backlog
 	if (listen(mySocket, 10) != 0) 	{
 		printf("LISTEN ERROR");
+		isOnlineMod = 0;
 		WSACleanup();
 		return 1;
 	}
 
-	//we will need variables to hold the client socket.
-	//thus we declare them here.
 	struct sockaddr_in from;
 	int fromlen = sizeof(from);
-
 
 	isOnlineMod = isServer = 1;
 	printf("Server jest uruchomiony ! \n");
 
-	while (1) {
+	while (client_index < MAX_CLIENTS) {
 
 		unsigned int curret_index = (client_index++);
 
@@ -548,6 +538,8 @@ DWORD WINAPI startServerThread() {
 
 	}
 
+	closesocket(mySocket);
+
 	return 0;
 }
 
@@ -567,51 +559,29 @@ void startServer() {
 DWORD WINAPI startClientThread() {
 
 	WSADATA wsaData;
-	// Server/receiver address
-
 	SOCKADDR_IN ServerAddr, ThisSenderInfo;
-	// Server/receiver port to connect to
 
 	// Initialize Winsock version 2.2
 	WSAStartup(MAKEWORD(2, 2), &wsaData);
 	printf("Client: Winsock DLL status is %s.\n", wsaData.szSystemStatus);
 
-	// AF_INET = 2, The Internet Protocol version 4 (IPv4) address family, TCP protocol
 	mySocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (mySocket == INVALID_SOCKET) {
-
 		printf("Client: socket() failed! Error code: %ld\n", WSAGetLastError());
-
-		// Do the clean up
+		isOnlineMod = 0;
 		WSACleanup();
-		// Exit with error
 		return 1;
 	}
 
-	// Set up a SOCKADDR_IN structure that will be used to connect
-	// to a listening server on port 5150. For demonstration
-	// purposes, let's assume our server's IP address is 127.0.0.1 or localhos
-
-	// IPv4
 	ServerAddr.sin_family = AF_INET;
-	// Port no.
 	ServerAddr.sin_port = htons(3000);
-
-	// The IP address
-
-	ServerAddr.sin_addr.s_addr = inet_addr("192.168.0.39");
-
-	// Make a connection to the server with socket SendingSocket.
+	ServerAddr.sin_addr.s_addr = inet_addr(IP_ADDRES);
 
 	if (connect(mySocket, (SOCKADDR *)&ServerAddr, sizeof(ServerAddr)) != 0) {
 		printf("Client: connect() failed! Error code: %ld\n", WSAGetLastError());
-
-		// Close the socket
 		closesocket(mySocket);
 		isOnlineMod = 0;
-		// Do the clean up
 		WSACleanup();
-		// Exit with error
 		return 1;
 	}
 
@@ -668,6 +638,16 @@ void startClient() {
 	);
 	system("PAUSE");
 }
+
+void goodEnd() {
+	removeAll();
+	closesocket(mySocket);
+	for (unsigned int i = 0; i < MAX_CLIENTS; i++) {
+		closesocket(clients[i].clientSocket);
+	}
+	WSACleanup();
+	exit(0);
+}
 	
 void drawMenu() {
 	system("cls");
@@ -685,8 +665,16 @@ void drawMenu() {
 	printf("b - Skopiuj wiadomosc do schowka \n");
 
 	printf("---------------- \n");
-	printf("s - Uruchom serwer \n");
-	printf("c - Polacz sie z serwerem \n");
+	if (isOnlineMod == 0) {
+		printf("s - Uruchom serwer \n");
+		printf("c - Polacz sie z serwerem \n");
+	}
+	else if (isServer == 0) {
+		printf("Aplikacja dziala jako klient \n");
+	}
+	else {
+		printf("Aplikacja dziala jako serwer \n");
+	}
 
 	printf("---------------- \n");
 	printf("0 - Wyjscie \n");
@@ -697,7 +685,7 @@ void readOptions() {
 	char opcja;
 	do {
 		opcja = getchar();
-	} while ((opcja < '0' || opcja > '9') && (opcja < 'a' || opcja > 'b') && opcja != 's' && opcja != 'c');
+	} while ((opcja < '0' || opcja > '9') && (opcja < 'a' || opcja > 'b') && ((opcja != 's' || opcja != 'c') && isOnlineMod != 0 ));
 
 	printf("\n");	
 	switch (opcja)
@@ -739,10 +727,7 @@ void readOptions() {
 		startClient();
 		break;
 	case '0':
-		removeAll();
-		closesocket(mySocket);
-		WSACleanup();
-		exit(0);
+		goodEnd();
 	}
 }
 
