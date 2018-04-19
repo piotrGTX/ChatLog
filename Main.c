@@ -17,8 +17,9 @@
 #define SHOW_LIMIT 10U
 
 #define MAX_CLIENTS 20
-#define IP_ADDRES "42.0.117.0"
-
+#define IP_ADDRES "192.168.43.54"
+#define PORT 3000
+ 
 HANDLE *watek;
 HANDLE watek_servera;
 SOCKET mySocket;
@@ -486,7 +487,7 @@ DWORD WINAPI startServerThread() {
 
 	local.sin_family = AF_INET;
 	local.sin_addr.s_addr = INADDR_ANY;
-	local.sin_port = htons(3000);
+	local.sin_port = htons(PORT);
 
 	mySocket = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -574,7 +575,8 @@ DWORD WINAPI startClientThread() {
 	}
 
 	ServerAddr.sin_family = AF_INET;
-	ServerAddr.sin_port = htons(3000);
+	ServerAddr.sin_port = htons(PORT);
+	printf("%d", ServerAddr.sin_port);
 	ServerAddr.sin_addr.s_addr = inet_addr(IP_ADDRES);
 
 	if (connect(mySocket, (SOCKADDR *)&ServerAddr, sizeof(ServerAddr)) != 0) {
